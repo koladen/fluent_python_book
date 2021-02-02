@@ -1,0 +1,286 @@
+Часть 4 ООП
+
+Параметры в функцию передаются ссылками(т.е. внутри функции можно изменить мутабельный объект из вне! Немутабельный
+изменить нельзя)
+Передача в функцию мутабельных параметров по умолчанию.
+С этим нужно быть аккуратным, т.к. можно получить неожиданный результат, в виде нежелательного изменения содержимого
+переменной из вне функции
+Пример:
+basketball_team = ['A', 'B', 'C']
+class TwilightBus:
+    def __init__(self, passengers=None):
+        if passengers is None:
+            self.passengers = []
+        else:
+            self.passengers = passengers # ВОТ ТУТ ПРОБЛЕМА! Переменная получает ссылку на список из вне функции
+            # и при удалении элементы будут исчезать и из списка из вне функции!
+            # НУЖНО ДЕЛАТЬ КОПИЮ! Вот так self.passengers = list(passengers)
+
+    def pick(self, name):
+        self.passengers.append(name)
+
+    def drop(self, name):
+        self.passengers.remove(name)
+
+
+
+del и сборка мусора
+
+Оператор del удаляет не объекты, а имена! В результате выполнения команды del объект может быть удален, но только в том
+случае, если в эотй переменной хранилась последняя ссылка на объект, или если объект стал недоступен. привязывание
+переменной к другому объекту так же может обнулить количество ссылок на текущий объект, что приведет его уничтожению.
+
+В каждом объекте хранится счетчик ссылок на него refcount. Как только счетчик обнуляется, объект удаляется.
+Интерпретатор вызывает метод __del__ объекта (если он определен), а затем освобождает выделенную для него память.
+
+Слабые ссылки на объект не увеличивают счетчик ссылок. Т.е. слабая ссылка не препятствует уничтожению объекта ссылки
+сборщиком мусора. Слабые ссылки полезны для кэширования, потому что мы не хотим чтобы кэшированный объект оставался жив,
+только потому что на него ссылается сам кэш.
+
+ОБЪЕКТЫ
+
+Наличие метода __iter__ делает объект итерируемым, именно благодаря ему работает распаковка переменных, например:
+x, y = Vector2d(3, 4) # x = 3; y = 4
+
+from array import array
+import math
+
+
+class Vector2d:
+    typecode = 'd'  # <1>
+
+    def __init__(self, x, y):
+        self.x = float(x)    # <2>
+        self.y = float(y)
+
+    def __iter__(self):
+        return (i for i in (self.x, self.y))  # <3>
+
+    def __repr__(self):
+        class_name = type(self).__name__
+        return '{}({!r}, {!r})'.format(class_name, *self)  # <4>
+
+    def __str__(self):
+        return str(tuple(self))  # <5>
+
+    def __bytes__(self):
+        return (bytes([ord(self.typecode)]) +  # <6>
+                bytes(array(self.typecode, self)))  # <7>
+
+    def __eq__(self, other):
+        return tuple(self) == tuple(other)  # <8> # Метод реализующий сравнение объектов
+
+    def __abs__(self):
+        return math.hypot(self.x, self.y)  # <9>
+
+    def __bool__(self):
+        return bool(abs(self))  # <10>
+
+
+Декоратор @classmethod - типичное применение - создание альтернативных конструкторов
+Например:
+@classmethod  # <1>
+def frombytes(cls, octets):  # <2>
+    typecode = chr(octets[0])  # <3>
+    memv = memoryview(octets[1:]).cast(typecode)  # Тут получаем тапл со значениями координат из байтовой строки
+    return cls(*memv)  # А затем, вызываем класс(параметры), чот дает нам создание экземпляра класса.
+
+
+Делаем объект хэшируемым.
+
+Для этого необходимо сделать, чтобы его атрибуты не изменялись(строго говоря это не обязательно), и реализовать метод
+__hash__. При реализации метода hash() рекомендуется объединять хэши компонентов с помощью поразрядного оператора
+ИСКЛЮЧАЮЩЕЕ ИЛИ (^):
+def __hash__(self):
+    return hash(self.x) ^ hash(self.y)
+
+
+Пример полный:
+from array import array
+import math
+
+# BEGIN VECTOR2D_V3_PROP
+class Vector2d:
+    typecode = 'd'
+
+    def __init__(self, x, y):
+        self.__x = float(x)  # Делаем атрибуты закрытыми
+        self.__y = float(y)
+
+    @property  # <2>
+    def x(self):  # Через property получаем данные закрытых атрибутов
+        return self.__x  #
+
+    @property  # <5>
+    def y(self):
+        return self.__y
+
+    def __iter__(self):
+        return (i for i in (self.x, self.y))  # <6>
+
+    def __repr__(self):
+        class_name = type(self).__name__
+        return '{}({!r}, {!r})'.format(class_name, *self)
+
+    def __str__(self):
+        return str(tuple(self))
+
+    def __bytes__(self):
+        return (bytes([ord(self.typecode)]) +
+                bytes(array(self.typecode, self)))
+
+    def __eq__(self, other):
+        return tuple(self) == tuple(other)
+
+# BEGIN VECTOR_V3_HASH
+    def __hash__(self):
+        return hash(self.x) ^ hash(self.y)
+# END VECTOR_V3_HASH
+
+    def __abs__(self):
+        return math.hypot(self.x, self.y)
+
+    def __bool__(self):
+        return bool(abs(self))
+
+    def angle(self):
+        return math.atan2(self.y, self.x)
+
+    def __format__(self, fmt_spec=''):
+        if fmt_spec.endswith('p'):
+            fmt_spec = fmt_spec[:-1]
+            coords = (abs(self), self.angle())
+            outer_fmt = '<{}, {}>'
+        else:
+            coords = self
+            outer_fmt = '({}, {})'
+        components = (format(c, fmt_spec) for c in coords)
+        return outer_fmt.format(*components)
+
+    @classmethod
+    def frombytes(cls, octets):
+        typecode = chr(octets[0])
+        memv = memoryview(octets[1:]).cast(typecode)
+        return cls(*memv)
+
+
+Закрытые и защищенные данне
+Если мы называем что-либо в класее (например атрибут), начиная с __ и оканчивая на 0 или 1_, то происходит декорирование
+имени, и в словарь экземпляра __dict__ это имя попадет как _имякласса__название атрибута
+Пример:
+Класс Dog
+Атрибут __mood
+Имя сдекорируется в _Dog__mood
+
+
+Экономия памяти с помощью атрибута __slots__.
+
+По умолчанию Питон хранит атрибуты экземпляра в словаре __dict__. Т.к. словарь представляет из себя хэш таблицу, а хэш
+таблица должна быть достаточно разряженной для эффективности, соответственно, когда у нас количество экземпляров класса
+измеряется миллионами, а количество атрибутов мало, памяти расходуется очень много.
+Чтобы сэкономить память, создаем у класса атрибут __slots__ и присваиваем ему итерируемый объект, содержащий строковые
+идентификаторы атрибутов экземпляра. Предпочтительно для этой цели использовать кортэж, т.к. явно даем понять, что
+определение __slots__ не может изменяться.
+Пример:
+class Vector2d:
+    __slots__ = ('__x', '__y')
+
+    typecode = 'd'
+
+В этом случае атрибуты хранятся не в словаре, а в кортэжеподобной структуре, что позволяет экономить много памяти.
+Если мы хотим чтобы экземпляры класса могли быть рбъектами слабых ссылок, то при использовании __slots__, кроме имен
+атрибутов, необходимо туда же включить и атрибут __weakref__! __slots__ = ('__x', '__y', '__weakref__')
+
+Необходимо снова объявлять __slots__ в каждом классе - наследнике, т.к. унаследованный атрибут будет проигнорирован
+
+
+Метод __getattr__
+
+Метод __getattr__ вызывается интерпретатором, если поиск атрибута завершается неудачейю Иначе говоря, анализируя
+выражение my_obj.x,  Питон ищет атрибут х у объекта, если не находит, ищет в классе my_obj.__class__, и далее по
+иерархии наследования. Если атрибут все равно не найден, вызывается метод __getattr__, определенный в классе __my_obj__,
+причем ему передается self и имя атрибута в виде строки - 'х'.
+
+Пример:
+
+shortcut_names = 'xyzt'
+
+    def __getattr__(self, name):
+        cls = type(self)
+        if len(name) == 1:
+            pos = cls.shortcut_names.find(name)
+            if 0 <= pos < len(self._components):
+                return self._components[pos]
+        msg = '{.__name__!r} object has no attribute {!r}'
+        raise AttributeError(msg.format(cls, name))
+
+При попытке установить атрибут х в любое значение, мы, в последующем, столкнемся с тем, что для х метод __getattr__
+перестанет работать, т.к. __getattr__ срабатывает ТОЛЬКО тогда, когда атрибут не найден, а при присвоении х какого либо
+значения, создастся атрибут с таким именем! Чтобы этого избежать, необходимо реализовать метод __setattr__
+Мы не запрещаем установку всех вообще атрибутов, а только таких, где имя состоит из 1 строчной буквы.
+
+def __setattr__(self, name, value):
+    cls = type(self)
+    if len(name) == 1:  # <1>
+        if name in cls.shortcut_names:  # <2>
+            error = 'readonly attribute {attr_name!r}'
+        elif name.islower():  # <3>
+            error = "can't set attributes 'a' to 'z' in {cls_name!r}"
+        else:
+            error = ''  # <4>
+        if error:  # <5>
+            msg = error.format(cls_name=cls.__name__, attr_name=name)
+            raise AttributeError(msg)
+    super().__setattr__(name, value)  # <6>
+
+
+Новая реализация метода сравнения __eq__:
+
+def __eq__(self, other):
+    return (len(self) == len(other) and all(a == b for a, b in zip(self, other)))
+
+Новая реализация метода __hash__:
+
+def __hash__(self):
+        hashes = (hash(x) for x in self)
+        return functools.reduce(operator.xor, hashes, 0)
+
+
+ПРОТОКОЛЫ И ИНТЕРФЕЙСЫ
+
+Для того, чтобы реализовать протокол ИЗМЕНЯЕМОЙ последовательности, необходимо реализовать (или динамически назначить)
+метод __setitem__
+
+def __setitem__(self, position, value):  # <1>
+    self._cards[position] = value
+
+
+НАСЛЕДОВАНИЕ
+
+Наследовать от встроенных типов - не всегда удачная идея, т.к. встроенные методы, как правило, игнорируют
+переопределенные, пользовательские. Чтобы избежать подобных ошибок, надо наследовать от классов в модуле collections:
+UserDict, UserList, UserString
+
+В каждом классе есть атрибут __mro__ (method resolution order - порядок разрешения методов), в котором хранится кортэж
+ссылок на суперклассы в порядке MRO, начиная от текущего класса и вверх по иерархии, до object
+
+
+ПЕРЕГРУЗКА ОПЕРАТОРОВ
+
+Унарные операторы.
+
+-, +, ~
+Перегружать легко. Можно писать любой код, но есть одно правило, должен возвращаться НОВЫЙ экземпляр подходящего типа!
+
+Обычные операторы
+
+Для поддержки операций с объектами разных типов в Питоне имеется специальный алгоритм. Видя выражение а+в, Питон
+выполняет следующие шаги:
+1) Если у а есть метод __add__, вызвать a__add__(в), и вернуть результат, если он не равен NotImplemented
+2) Если такого метода нет, или он вернул NotImplemented, проверить, есть ли у в метод __radd__ (это инверсный __add__),
+и если есть, выполнить в.__radd__(а), и вернуть результат, если он не равен NotImplemented
+3) Если __radd__ нет, или он вернул NotImplemented, возбудить исключение TypeError с сообщением "unsupported operand
+types"
+
+Операторы сравнения
+а == в Вернуть а.__eq__(b), не получилось, вернуть b.__eq__(a), не получилось, вернуть id(a) == id(b)
