@@ -1,0 +1,536 @@
+Часть 5 Поток управления
+
+Итераторы и генераторы
+
+Всякий раз, когда Питону нужно обойти объект х, он вызывает функцию iter(х). Она работает следующим образом:
+1) Смотрит, реализован ли метод __iter__, и если да, вызывает его чтобы получить итератор
+2) Если метод __iter__ не реализован, но есть __getitem__, то создается итератор, который будет пытаться извлекать
+элементы по порядку, начиная с 0
+3) Если и это не получается, то возбуждается исключение " object is no iterable"
+
+Именно поэтому любая последовательность является итерируемой, все они реализуют метод __getitem__
+
+В стандартном интерфейсе итератора есть 2 метода:
+__next__ - возвращает следующий доступный элемент и возбуждает исключение StopIteration, кошда элементы закончились
+__iter__ - возвращает self, что позволяет использовать итратор там, где ожидается итерируемый объект, например в цикле
+for
+
+Лучший способ выяснить, является ли объект х итератором - вызвать функцию isinstance(x, abc.Iterator)
+
+Не существует способа узнать, сколько еще элементов осталось, только вызывать next и перехватывать исключение
+StopIteration
+
+Так же, нельзя сбросить итератор, только создать новый, вызвав iter над итерируемым объектом
+
+Определение итератора:
+Итератор - любой объект, реализующий метод __next__ без аргументов, который возвращает следующий элемент или возбуждает
+исключение StopIteration, если элементов не осталось. В Питоне итераторы так же реализуют метод __iter__, и по этому
+сами являются итерируемыми объектами
+
+ГЕНЕРАТОРЫ
+
+Любая функция, в теле которой встречается yield, называется генераторной функцией. Привызове она возвращает объект
+генератор. Иными словами, генераторная функция - это фабрика генераторов
+
+Генератор - это итератор, который порождает значения выражений переданных yield
+
+Если в функции iter указать второй аргумент, то итератор будет отдавать значения до тех пор, пока не встретится тот
+самый второй аргумент.
+Пример:
+with open('dada.txt') as fp
+    for line in iter(fp.readline, ''):
+        process_line(line)
+Тут мы читаем построчно файл, пока не встретится пустая строка, или конец файла
+
+МЕНЕДЖЕРЫ КОНТЕКСТА
+
+Пример:
+class LookingGlass:
+
+    def __enter__(self):  # <1>
+        import sys
+        self.original_write = sys.stdout.write  # <2> #Сохраняем нормальное поведение write
+        sys.stdout.write = self.reverse_write  # <3> #Подменяем стандартный write своей процедурой
+        return 'JABBERWOCKY'  # <4># Возвращаем хоть что,то т.к. нужно что-то вернуть
+
+    def reverse_write(self, text):  # <5>
+        self.original_write(text[::-1])
+
+    def __exit__(self, exc_type, exc_value, traceback):  # <6>
+        import sys  # <7>
+        sys.stdout.write = self.original_write  # <8>
+        if exc_type is ZeroDivisionError:  # <9>
+            print('Please DO NOT divide by zero!')
+            return True  # <10>
+
+Теперь с этим менеджером контекста, любой print будет выводить инвертированное сообщение
+with LookingGlass() as What:
+    print('ABc')
+
+будет выведено 'cBA'
+
+Создание менеджера контекста с помощью декоратора
+
+Пример:
+import contextlib
+
+
+@contextlib.contextmanager
+def looking_glass():
+    import sys
+    original_write = sys.stdout.write
+
+    def reverse_write(text):
+        original_write(text[::-1])
+
+    sys.stdout.write = reverse_write
+    msg = ''  # <1>
+    try:
+        yield 'JABBERWOCKY'
+    except ZeroDivisionError:  # <2>
+        msg = 'Please DO NOT divide by zero!'
+    finally:
+        sys.stdout.write = original_write  # <3>
+        if msg:
+            print(msg)  # <4>
+
+Все что до yield будет работать как __enter__ в классе. Все что после yield, будет работать как __exit__ в классе
+
+СОПРОГРАММЫ
+
+Строка вида yield item порождает значение, которое получает сторона вызвавшая next(), а кроме того, она уступает
+процессор, приостанавливая выполнение генератора, чтобы вызывающая сторона могла продолжить выполнение до момента, когда
+ей потребуется следующее значение.
+
+Сопрограмма выглядит как генератор, у нее есть ключевое слово yield, но это слово стоит справа после оператора
+присваивания, и может порождать или не порождать никакого значения, после yield может не стоять ничего, и тогда
+генератор отдает None.
+Сопрограмма может получать данные от вызывающей стороны, если та, вместо next() передаст send(что-то там).
+
+Может быть и так, что yield не порождает и не получает данные, но в любом случае yield является средством управления
+потоком выполнения, которое можно использовать для реализации невытесняющей многозадачности. Каждая сопрограмма уступает
+время центральному планировщику, чтобы он мог вызвать другие сопрограммы.
+
+Сопрограмма может находиться в одном из 4 состояний, в каком именно, позволяет узнать функция
+inspect.getgeneratorstate():
+1) 'GEN_CREATED' - Ожидает начала выполнения
+2) 'GEN_RUNNING' - Выполняется
+3) 'GEN_SUSPENDED' - Приостановлена по yield
+4) 'GEN_CLOSED' - Выполнение завершилось
+
+Получение сопрограммой данных возможно, когда она приостановлена по yield, поэтому, в начале работы необходимо вызвать
+next, или послать send(None), результат одинаковый
+
+Пример сопрограммы для вычисления среднего:
+def averager():
+    total = 0.0
+    count = 0
+    average = None
+    while True:  # <1>
+        term = yield average  # <2># Сюда прилетит число из send(что-то)
+        total += term
+        count += 1
+        average = total/count
+
+Преимущества в этом примере - не нужно никакиз замыувний и nonlocal
+
+Чтобы сопрограмма работала, надо не забывать инициализировать ее по next(). Для этого можно написать декоратор
+
+def coroutine(func):
+    def inner(*args, **kwargs):
+        gen = func(*args, **kwargs)
+        next(gen)
+        return gen
+        return inner
+
+И теперь перед определением корутины можно написать:
+@coroutine
+def averager():
+
+Конструкция yield from автоматически инициализирует вызываемуб с ее помощью сопрограмму, и потэтому несовместима с этим
+и ему подобными декоратором
+
+Завершение сопрограммы и обработка исключений
+
+Необработанное исключение придет из сопрограммы в функцию из которой был вызов next() или send() приведший к исключению
+У объектов - генераторов есть 2 метода, чтобы отправить клиент мог явно исключение сопрограмме: throw и close
+
+generator.throw(exc_type[, exc_value[, traceback]])) - (generator тут - это имя конкретного генератора)приводит к тому,
+что yield в котором генератор приостановлен, возбуждает указанное исключение. Если генератор обработает исключение,
+выполение продолжится до следующего yield, а отданное значение станет значением вызова generator.throw. Если исключение
+не обработано, то оно перейдет в контекст вызывающей стороны
+
+generator.close() - yield в котором генератор приостановлен, возбуждает исключение GeneratorExit. Если генератор не
+обработает это исключение или возбудит StopIteration, вызывающая сторона не получит никакой ошибки. Получив исключение
+GeneratorExit, генератор не должен отдавать значение, иначе возникнет исключение RunTimeError. Если генератор возбудит
+любое другое сключение, оно перейдет в контекст вызывающей стороны
+
+Пример:
+class DemoException(Exception):
+    """An exception type for the demonstration."""
+
+def demo_exc_handling():
+    print('-> coroutine started')
+    while True:
+        try:
+            x = yield
+        except DemoException:  # <1># Если прилетело DemoException от метода generator.throw, обработаем его
+            print('*** DemoException handled. Continuing...')
+        else:  # <2> # Иначе, если исключения не было, работаем дальше
+            print('-> coroutine received: {!r}'.format(x))
+    raise RuntimeError('This line should never run.')  # <3># Эта строка никогда не выполнится
+
+Если через generator.throw прилетит какое-либо сключение, которое не будет обработано, то сопрограмма завершится
+
+Возврат значения из сопрограммы
+
+Пример:
+from collections import namedtuple
+
+Result = namedtuple('Result', 'count average')
+
+
+def averager():
+    total = 0.0
+    count = 0
+    average = None
+    while True:
+        term = yield # Тут не отдаем ничего, в отличие от предыдущей версии. Вернем значение return-ом
+        if term is None:
+            break  # <1> # Мы хотим выйти из цикла, поэтому когда прилетает None, выходим
+        total += term
+        count += 1
+        average = total/count
+    return Result(count, average)  # <2># Тут сопрограмма возвращает значение. Значение вернется в виде атрибута
+                                    исключения StopIteration!!!!
+
+
+Использование yield from
+
+Когда генератор gen вызывает yield from subgen(), subgen перехватывает управление и начинает отдавать значения
+непосредственно функции, из которой был вызван gen. А тем временем gen остается заблокированным в ожидании завершения
+subgen
+
+Пример:
+from collections import namedtuple
+
+Result = namedtuple('Result', 'count average')
+
+# the subgenerator
+def averager():  # <1>
+    total = 0.0
+    count = 0
+    average = None
+    while True:
+        term = yield  # <2>
+        if term is None:  # <3>
+            break
+        total += term
+        count += 1
+        average = total/count
+    return Result(count, average)  # <4>
+
+
+# the delegating generator
+def grouper(results, key):  # <5>
+    while True:  # <6>
+        results[key] = yield from averager()  # <7>
+
+
+# the client code, a.k.a. the caller
+def main(data):  # <8>
+    results = {}
+    for key, values in data.items():
+        group = grouper(results, key)  # <9>
+        next(group)  # <10>
+        for value in values:
+            group.send(value)  # <11>
+        group.send(None)  # important! <12>
+
+    print(results)
+
+data = {
+    'girls;kg':
+        [40.9, 38.5, 44.3, 42.2, 45.2, 41.7, 44.5, 38.0, 40.6, 44.5],
+    'girls;m':
+        [1.6, 1.51, 1.4, 1.3, 1.41, 1.39, 1.33, 1.46, 1.45, 1.43],
+    'boys;kg':
+        [39.0, 40.8, 43.2, 40.8, 43.1, 38.6, 41.4, 40.6, 36.3],
+    'boys;m':
+        [1.38, 1.5, 1.32, 1.25, 1.37, 1.48, 1.25, 1.49, 1.46],
+}
+
+
+if __name__ == '__main__':
+    main(data)
+
+Если субгенератор никогда не завершается, то делегирующий генератор будет начечно заблокирован в выражении yield from
+Сама программа будет продолжаться, поскольку yield from так же передает управление клиентскому коду, но какая-то часть
+программы останется невыполненой
+
+Семантика yield from:
+1) Все значения отдаваемые субгенератором передаются напрямую вызывающей стороне делегирующего генератора, т.е.
+клиентскому коду
+
+2) Все значения отправляемые делегирующему генератору методом send передаются напрямую субгенератору. Если отправлено
+значение None, то вызывается метод next субгенератора. Если отправлено значение отличное от None, то вызывается метод
+send субгенератора. Если вызов вызывает исключение StopIteration, то выполнение делегирующего генератора возобновляется
+Любое другое исключение распростроняется в делегирующий генератор
+
+3) Выполнение return expr в генераторе или субгенераторе приводит к возбуждению исключения StopIteration(expr) по выходе
+из генератора
+
+4) Значение выражения yield from является первым аргументом исключения StopIteration возбуждаемого субгенератором при
+завершении
+
+5) Исключения отличные от GeneratorExit, возбуждаемые методом throw, в делегирующем генераторе, передаются методу throw
+субгенератора
+
+6) Если в делегирующем генераторе методом throw возбуждено исключение GeneratorExit или вызван метод close делегирующего
+генератора, то вызывается метод close субгенератора, если такой имеется. Если этот вызов приводит к исключению, оно
+распростроняется делегирующему генератору. В противном случае в делегирующем генераторе возбуждается исключение
+GeneratorExit
+
+
+Моделирование дискретных событий с помощью сопрограмм
+
+Пример:
+import random
+import collections
+import queue
+import argparse
+
+DEFAULT_NUMBER_OF_TAXIS = 3
+DEFAULT_END_TIME = 180
+SEARCH_DURATION = 5
+TRIP_DURATION = 20
+DEPARTURE_INTERVAL = 5
+
+Event = collections.namedtuple('Event', 'time proc action')
+
+
+# BEGIN TAXI_PROCESS
+def taxi_process(ident, trips, start_time=0):  # <1>
+    """Yield to simulator issuing event at each state change"""
+    time = yield Event(start_time, ident, 'leave garage')  # <2>
+    for i in range(trips):  # <3>
+        time = yield Event(time, ident, 'pick up passenger')  # <4>
+        time = yield Event(time, ident, 'drop off passenger')  # <5>
+
+    yield Event(time, ident, 'going home')  # <6>
+    # end of taxi process # <7>
+# END TAXI_PROCESS
+
+
+# BEGIN TAXI_SIMULATOR
+class Simulator:
+
+    def __init__(self, procs_map):
+        self.events = queue.PriorityQueue()
+        self.procs = dict(procs_map)
+
+    def run(self, end_time):  # <1>
+        """Schedule and display events until time is up"""
+        # schedule the first event for each cab
+        for _, proc in sorted(self.procs.items()):  # <2>
+            first_event = next(proc)  # <3>
+            self.events.put(first_event)  # <4>
+
+        # main loop of the simulation
+        sim_time = 0  # <5>
+        while sim_time < end_time:  # <6>
+            if self.events.empty():  # <7>
+                print('*** end of events ***')
+                break
+
+            current_event = self.events.get()  # <8>
+            sim_time, proc_id, previous_action = current_event  # <9>
+            print('taxi:', proc_id, proc_id * '   ', current_event)  # <10>
+            active_proc = self.procs[proc_id]  # <11>
+            next_time = sim_time + compute_duration(previous_action)  # <12>
+            try:
+                next_event = active_proc.send(next_time)  # <13>
+            except StopIteration:
+                del self.procs[proc_id]  # <14>
+            else:
+                self.events.put(next_event)  # <15>
+        else:  # <16>
+            msg = '*** end of simulation time: {} events pending ***'
+            print(msg.format(self.events.qsize()))
+# END TAXI_SIMULATOR
+
+
+def compute_duration(previous_action):
+    """Compute action duration using exponential distribution"""
+    if previous_action in ['leave garage', 'drop off passenger']:
+        # new state is prowling
+        interval = SEARCH_DURATION
+    elif previous_action == 'pick up passenger':
+        # new state is trip
+        interval = TRIP_DURATION
+    elif previous_action == 'going home':
+        interval = 1
+    else:
+        raise ValueError('Unknown previous_action: %s' % previous_action)
+    return int(random.expovariate(1/interval)) + 1
+
+
+def main(end_time=DEFAULT_END_TIME, num_taxis=DEFAULT_NUMBER_OF_TAXIS,
+         seed=None):
+    """Initialize random generator, build procs and run simulation"""
+    if seed is not None:
+        random.seed(seed)  # get reproducible results
+
+    taxis = {i: taxi_process(i, (i+1)*2, i*DEPARTURE_INTERVAL)
+             for i in range(num_taxis)}
+    sim = Simulator(taxis)
+    sim.run(end_time)
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(
+                        description='Taxi fleet simulator.')
+    parser.add_argument('-e', '--end-time', type=int,
+                        default=DEFAULT_END_TIME,
+                        help='simulation end time; default = %s'
+                        % DEFAULT_END_TIME)
+    parser.add_argument('-t', '--taxis', type=int,
+                        default=DEFAULT_NUMBER_OF_TAXIS,
+                        help='number of taxis running; default = %s'
+                        % DEFAULT_NUMBER_OF_TAXIS)
+    parser.add_argument('-s', '--seed', type=int, default=None,
+                        help='random generator seed (for testing)')
+
+    args = parser.parse_args()
+    main(args.end_time, args.taxis, args.seed)
+
+
+ПАРАЛЛЕРИРИЗМ И ФУТУРЫ
+
+Пример с неявными футурами, через функцию executor.map:
+import os
+import time
+import sys
+from concurrent import futures  # <1>
+
+import requests
+
+POP20_CC = ('CN IN US ID BR PK NG BD RU JP '
+            'MX PH VN ET EG DE IR TR CD FR').split()
+
+BASE_URL = 'http://flupy.org/data/flags'
+
+DEST_DIR = 'downloads/'
+
+MAX_WORKERS = 20  # <2> # Это максимальное число потоков
+
+def save_flag(img, filename):
+    path = os.path.join(DEST_DIR, filename)
+    with open(path, 'wb') as fp:
+        fp.write(img)
+
+
+def get_flag(cc):
+    url = '{}/{cc}/{cc}.gif'.format(BASE_URL, cc=cc.lower())
+    resp = requests.get(url)
+    return resp.content
+
+
+def show(text):
+    print(text, end=' ')
+    sys.stdout.flush()
+
+
+def download_one(cc):  # <3> # Функция загружающая одно изображени, ее будет использовать каждый поток
+    image = get_flag(cc)
+    show(cc)
+    save_flag(image, cc.lower() + '.gif')
+    return cc
+
+
+def download_many(cc_list):
+    workers = min(MAX_WORKERS, len(cc_list))  # <4>
+    with futures.ThreadPoolExecutor(workers) as executor:  # <5> # Менеджер контекста. __exit__ вызовет
+                                                           executor.shutdown(wait = True), который блокирует выполнение
+                                                           программы до завершения всех потоков
+        res = executor.map(download_one, sorted(cc_list))  # Похож на обычный map, за тем исключением, что download_one
+                                                           вызывается параллельно из нескольких потоков; он возвращает
+                                                           генератор который можно обойти для получения значений
+                                                           возвращенных каждой функцией
+
+    return len(list(res))  # <7>
+
+
+def main():  # <10>
+    t0 = time.time()
+    count = download_many(POP20_CC)
+    elapsed = time.time() - t0
+    msg = '\n{} flags downloaded in {:.2f}s'
+    print(msg.format(count, elapsed))
+
+
+if __name__ == '__main__':
+    main()
+
+
+Футуры
+
+Футуры - некое отложенное вычисление, завершившееся или нет. Футуры инкапсулируют ожидающие операции, так что их можно
+помещать в очереди, опрашивать состояние завершения и получать результаты (или исключения) когда они станут доступны
+
+У футур имеется неблокирующий метод .done(), который отдает булевое значение, завершился вызываемый объект связанный с
+экземпляром класса или нет. Но вместо того, чтобы самому проверять состояние, клиен обычно просит, чтобы его уведомили
+Поэтому имеется метод .add_done_callback(). Если передать ему вызывающий объект, то он будет вызван, когда футура
+завершится, а в качестве единственного аргумента будет передана эта самая футура
+
+Пример с явными футурами, переписана функция download_many:
+import collections
+from concurrent import futures
+
+import requests
+import tqdm  # <1>
+
+from flags2_common import main, HTTPStatus  # <2>
+from flags2_sequential import download_one  # <3>
+
+DEFAULT_CONCUR_REQ = 30  # <4>
+MAX_CONCUR_REQ = 1000  # <5>
+
+
+def download_many(cc_list, base_url, verbose, concur_req):
+    counter = collections.Counter()
+    with futures.ThreadPoolExecutor(max_workers=concur_req) as executor:  # <6>
+        to_do_map = {}  # <7>
+        for cc in sorted(cc_list):  # <8>
+            future = executor.submit(download_one,
+                            cc, base_url, verbose)  # Планируем вызываемую операцию, возвращает объект футуры
+            to_do_map[future] = cc  # <10>
+        done_iter = futures.as_completed(to_do_map)  # Выдает футуры по мере их завершения
+        if not verbose:
+            done_iter = tqdm.tqdm(done_iter, total=len(cc_list))  # <12>
+        for future in done_iter:  # <13>
+            try:
+                res = future.result()  # Тут получаем результат выполнения футуры
+            except requests.exceptions.HTTPError as exc:  # <15>
+                error_msg = 'HTTP {res.status_code} - {res.reason}'
+                error_msg = error_msg.format(res=exc.response)
+            except requests.exceptions.ConnectionError as exc:
+                error_msg = 'Connection error'
+            else:
+                error_msg = ''
+                status = res.status
+
+            if error_msg:
+                status = HTTPStatus.error
+            counter[status] += 1
+            if verbose and error_msg:
+                cc = to_do_map[future]  # <16>
+                print('*** Error for {}: {}'.format(cc, error_msg))
+
+    return counter
+
+
+if __name__ == '__main__':
+    main(download_many, DEFAULT_CONCUR_REQ, MAX_CONCUR_REQ)
+
